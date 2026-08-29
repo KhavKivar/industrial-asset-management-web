@@ -23,7 +23,6 @@ import Paper from '@mui/material/Paper';
 import Select from '@mui/material/Select';
 import { createTheme, ThemeProvider, useTheme } from '@mui/material/styles';
 import TextField from '@mui/material/TextField';
-import AWS from 'aws-sdk';
 import axios from "axios";
 
 import moment from 'moment';
@@ -33,7 +32,6 @@ import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate, useParams } from 'react-router-dom';
 import { clean, format, validate } from 'rut.js';
 import styled from 'styled-components';
-import { v4 as uuidv4 } from 'uuid';
 import { addCliente } from '../features/clienteSlice';
 import { addMovimiento, editMovimiento } from '../features/movimientoSlice';
 import { cleanInput, setActa, setActaList, setFechaMovimiento, setCambio, setCodigo, setFechaTermino, setGuiaDespacho, setObv, setRut, setRutInputValue, setSelectFile, setTipo, setTransporte } from '../features/movRegisterSlice';
@@ -46,22 +44,6 @@ import DangerousIcon from '@mui/icons-material/Dangerous';
 import Card from '@mui/material/Card';
 import { updateEstado } from '../features/inventarioSlice';
 import esLocale from 'date-fns/locale/es';
-
-
-
-const S3_BUCKET = process.env.REACT_APP_AWS_BUCKET_NAME;
-const REGION = process.env.REACT_APP_AWS_REGION;
-
-AWS.config.update({
-    accessKeyId: process.env.REACT_APP_AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.REACT_APP_AWS_SECRET_ACCESS_KEY
-})
-
-const myBucket = new AWS.S3({
-    params: { Bucket: S3_BUCKET },
-    region: REGION,
-})
-
 
 
 
@@ -465,26 +447,17 @@ const AddMovComponent = () => {
     };
 
 
-    const uploadFile = (file, name) => {
+    const uploadFile = async (file) => {
+        const extension = `.${file.name.split('.').pop().toLowerCase()}`;
+        const response = await axios.post(`${API.baseURL}/generatePresignedUrl`, {
+            fileType: extension,
+        });
 
+        await axios.put(response.data.uploadUrl, file, {
+            headers: { 'Content-Type': file.type || 'application/octet-stream' },
+        });
 
-
-
-        const params = {
-            ACL: 'public-read',
-            Body: file,
-            Bucket: S3_BUCKET,
-            Key: name
-        };
-
-        myBucket.putObject(params)
-            .on('httpUploadProgress', (evt) => {
-
-            })
-            .send((err) => {
-                if (err) console.log(err)
-            })
-
+        return response.data.downloadUrl;
     }
     const handleErrors = () => {
 
@@ -619,9 +592,7 @@ const AddMovComponent = () => {
         });
 
     }
-    const sendLogic = () => {
-        var re = /(?:\.([^.]+))?$/;
-
+    const sendLogic = async () => {
         //Get rut;
         const index_cliente = clienteList.findIndex(x => x.nombre == rut);
         let realRut = "1111111-1";
@@ -647,26 +618,7 @@ const AddMovComponent = () => {
         console.log(movimientoObject);
 
         if (selectedFile != null) {
-            const key = uuidv4() + "." + re.exec(selectedFile.name)[1];
-            const url = "https://licman.s3.amazonaws.com/" + key.toString();
-            movimientoObject.urlGuiaDespacho = url;
-            const params = {
-                ACL: 'public-read',
-                Body: selectedFile,
-                Bucket: S3_BUCKET,
-                Key: key
-            };
-
-            myBucket.putObject(params)
-                .on('httpUploadProgress', (evt) => {
-
-                })
-                .send((err, data) => {
-
-                    if (err) {
-                        console.log(err);
-                    }
-                });
+            movimientoObject.urlGuiaDespacho = await uploadFile(selectedFile);
         }
         if (edit) {
             sendObjEdit(movimientoObject);
@@ -685,8 +637,13 @@ const AddMovComponent = () => {
             }
         }
         setButtonState({ state: "loading" });
-        await delay(400);
-        sendLogic();
+        try {
+            await delay(400);
+            await sendLogic();
+        } catch (error) {
+            console.error('Unable to submit movement', error);
+            setButtonState({ state: "fail" });
+        }
 
 
     };
